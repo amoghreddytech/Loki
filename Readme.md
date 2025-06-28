@@ -17,8 +17,12 @@ I learnt about it through some challenge that can be found
 
 
 ##### Echo challenge.
-- If you're running this echo is in src/bin/echo.rs
+- If you're running this codebase is in src/bin/echo.rs
 - run lein run test - w --bin loki/target/debug/echo --node-count 3 -- time-limit 10
- 
 
- 
+
+##### Unique_id  challenge 
+- If you're running this codebase it is in src/bin/id_generator.rs
+- run lein run test - w --bin loki/target/debug/id_generator --node-count 3 -- time-limit 30 --rate 1000 --availability total --nemesis partition
+
+##### Broadcast
