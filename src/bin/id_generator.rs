@@ -1,7 +1,7 @@
 use anyhow::Result;
-use loki::echo::node::EchoNode;
 use loki::message::Envelope;
-use loki::{echo::payload::IncomingPayload, message::HandleMessage};
+use loki::unique_id::node::GenerateNode;
+use loki::{message::HandleMessage, unique_id::payload::IncomingPayload};
 use serde_json::from_str;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout};
 
@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
     let reader = BufReader::new(stdin);
     let mut lines = reader.lines();
     let mut stdout = stdout();
-    let mut node: EchoNode = EchoNode::new();
+    let mut node: GenerateNode = GenerateNode::new();
 
     while let Some(line) = lines.next_line().await? {
         let envelope: Envelope<IncomingPayload> = from_str(&line)?;

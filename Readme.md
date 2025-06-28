@@ -16,4 +16,9 @@ I learnt about it through some challenge that can be found
 1. Init -> So the nodes are initialized with init messages and we need to handel that. 
 
 
+##### Echo challenge.
+- If you're running this echo is in src/bin/echo.rs
+- run lein run test - w --bin loki/target/debug/echo --node-count 3 -- time-limit 10
+ 
+
  

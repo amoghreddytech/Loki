@@ -15,3 +15,6 @@ async-trait = "0.1.88"
 [[bin]]
 name = "echo"
 path = "src/bin/echo.rs"
+[[bin]]
+name = "id_generator"
+path = "src/bin/id_generator.rs"
