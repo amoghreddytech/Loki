@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use super::payload::TopologyOk;
+use super::payload::{ReadOk, TopologyOk};
 use crate::message::{Envelope, HandleMessage};
 use std::collections::HashSet;
 
@@ -78,6 +78,13 @@ impl HandleMessage<Envelope<IncomingPayload>> for BroadCastNode {
 
                 let payload = OutgoingPayload::TopologyOk(TopologyOk::new(metadata));
 
+                Envelope::new(msg_dest, msg_src, payload)
+            }
+
+            IncomingPayload::ReadPayload(data) => {
+                let metadata = Metadata::new(Some(msg_id), data.metadata.msg_id);
+                let messages: Vec<usize> = self.seen.clone().into_iter().collect::<Vec<usize>>();
+                let payload = OutgoingPayload::ReadPayloadOk(ReadOk::new(metadata, messages));
                 Envelope::new(msg_dest, msg_src, payload)
             }
         };
