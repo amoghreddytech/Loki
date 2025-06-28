@@ -1,13 +1,12 @@
 # Loki - Should have binaries that pass the maelstrom test suite.
 
 ### Maelstrom
-The test suite can be found.
-[here](https://github.com/jepsen-io/maelstrom?tab=readme-ov-file)
+The test suite can be found and installed though this link [here](https://github.com/jepsen-io/maelstrom?tab=readme-ov-file).
 
 
 ### Flyio Gosssip Glomers
-I learnt about it through
-[here](https://fly.io/dist-sys/)
+I learnt about it through some challenge that can be found
+[here](https://fly.io/dist-sys/).
 
 
 #### Challenges
