@@ -30,6 +30,8 @@ pub enum IncomingPayload {
     Topology(Topology),
     #[serde(rename = "read")]
     ReadPayload(ReadStruct),
+    Broadcast(Broadcast),
+    BroadcastOk(BroadcastOk),
 }
 
 // Consists of the outgoing messages for the echo test
@@ -41,6 +43,8 @@ pub enum OutgoingPayload {
     TopologyOk(TopologyOk),
     #[serde(rename = "read_ok")]
     ReadPayloadOk(ReadOk),
+    BroadcastOk(BroadcastOk),
+    Broadcast(Broadcast),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,5 +118,30 @@ pub struct ReadOk {
 impl ReadOk {
     pub fn new(metadata: Metadata, messages: Vec<usize>) -> Self {
         Self { metadata, messages }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Broadcast {
+    #[serde(flatten)]
+    pub metadata: Metadata,
+    pub message: usize,
+}
+
+impl Broadcast {
+    pub fn new(metadata: Metadata, message: usize) -> Self {
+        Self { metadata, message }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BroadcastOk {
+    #[serde(flatten)]
+    pub metadata: Metadata,
+}
+
+impl BroadcastOk {
+    pub fn new(metadata: Metadata) -> Self {
+        Self { metadata }
     }
 }

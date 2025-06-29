@@ -1,6 +1,7 @@
 use anyhow::Result;
 use loki::broadcast::node::BroadCastNode;
-use loki::message::HandleMessage;
+use loki::broadcast::payload::IncomingPayload;
+use loki::message::{Envelope, HandleMessage};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout};
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -13,9 +14,9 @@ async fn main() -> Result<()> {
     let sender = tx.clone();
     let mut node: BroadCastNode = BroadCastNode::new(sender);
 
+    let mut stdout = stdout();
     tokio::spawn(async move {
         while let Some(response) = rx.recv().await {
-            let mut stdout = stdout();
             let response_json = response.to_string();
             if let Err(e) = stdout.write_all(response_json.as_bytes()).await {
                 eprintln!("Failed to write to stdout: {:?}", e);
@@ -31,11 +32,20 @@ async fn main() -> Result<()> {
             };
         }
     });
-
     while let Some(line) = lines.next_line().await? {
-        let envelope = serde_json::from_str(&line)?;
-        if let Some(response) = node.handle_message(envelope).await? {
-            tx.send(response)?;
+        match serde_json::from_str::<Envelope<IncomingPayload>>(&line) {
+            Ok(envelope) => {
+                if let Some(response) = node.handle_message(envelope).await? {
+                    tx.send(response)?;
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "Failed to deserialize incoming message: {}\nLine: {}",
+                    e, line
+                );
+                // You can decide to continue or break here
+            }
         }
     }
 
