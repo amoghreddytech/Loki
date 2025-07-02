@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use tokio::time::{Duration, sleep};
 
 use super::payload::{
     Broadcast, BroadcastOk, Gossip, GossipOk, IncomingPayload, InitOk, Metadata, OutgoingPayload,
@@ -27,7 +28,7 @@ pub struct BroadCastNode {
     // I need a node_map_of_seen_values
     // say my node_id ix 1 -> this map will be
     // {"n2", [33,54], n3: [42,45], n4 : [65,76]}
-    // pub gossip_map: Arc<Mutex<HashMap<String, HashSet<usize>>>>,
+    pub gossip_map: Arc<Mutex<HashMap<String, HashSet<usize>>>>,
 
     // This hashmap needs to hold the msg_id or the broadcast value and the nodes that it needs to send it to
     pub pending_acks: Arc<Mutex<HashMap<String, HashSet<String>>>>,
@@ -42,7 +43,7 @@ impl BroadCastNode {
             neighbours: Vec::new(),
             seen: HashSet::new(),
             transmitter,
-            // gossip_map: Arc::new(Mutex::new(HashMap::new())),
+            gossip_map: Arc::new(Mutex::new(HashMap::new())),
             // I need to know foe each broadcast which neighbours have not replied
             pending_acks: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -54,6 +55,84 @@ impl BroadCastNode {
         *guard = guard.saturating_add(1);
         id
     }
+
+    async fn smarter_broadcast_with_retries(&self, counter: Arc<Mutex<usize>>, message: usize) {
+        // I need some smart broadcast with like a retry mechanism
+        // First ting I need to do is spawn a task that does the broadcast for me.
+
+        let node_id = self.node_id.clone();
+        let key = format!("{}, {}", node_id, message);
+        let acks_guard = Arc::clone(&self.pending_acks);
+        let all_neighbours = self.neighbours.clone();
+        let transmitter = self.transmitter.clone();
+
+        tokio::spawn(async move {
+            let mut pending_acks = {
+                let mut guard = acks_guard.lock().await;
+                match guard.get(&key) {
+                    // If it's some great we take that
+                    Some(set) => set.clone(),
+                    // If it's none we a create a hashset with
+                    None => {
+                        let neighbours = all_neighbours;
+                        let set = HashSet::from_iter(neighbours.clone());
+                        guard.insert(key.clone(), set.clone());
+                        set
+                    }
+                }
+            };
+
+            while !pending_acks.is_empty() {
+                for neighbour in pending_acks.iter() {
+                    let new_message_id = Self::get_msg_id(&counter).await;
+                    let meta = Metadata::new(Some(new_message_id), None);
+                    let b_payload = OutgoingPayload::Broadcast(Broadcast::new(meta, message));
+
+                    let b_envelope = Envelope::new(node_id.clone(), neighbour.clone(), b_payload);
+                    let json_value = match serde_json::to_value(&b_envelope) {
+                        Ok(val) => val,
+                        Err(e) => {
+                            eprintln!(
+                                "could not convert {:?} to a serde json value with errro {e}",
+                                &b_envelope
+                            );
+                            panic!("")
+                        }
+                    };
+
+                    if let Err(e) = transmitter.send(json_value) {
+                        eprintln!(
+                            "Could not send from broadcast to nighbours, printing is weird cause of borrow rules but do it now :---D \n {e} "
+                        );
+                    }
+                }
+
+                pending_acks = {
+                    let guard = acks_guard.lock().await;
+                    match guard.get(&key) {
+                        // If it's some great we take that
+                        Some(set) => set.clone(),
+                        // If it's none we a create a hashset with
+                        None => break,
+                    }
+                };
+
+                sleep(Duration::from_secs(1)).await;
+            }
+        });
+
+        // This gets the pending acknologments for the key
+
+        // for the pending acks I am now going to send it to them
+
+        // I have transmitted my acks. I'm done broadcasting.
+    }
+
+    // I'll pass in arcs and stuff later
+    // If I'm moving it to different threds
+    // Now I'll just push this out into a
+    // seperate function so I don't remake this
+    // work again.
 
     async fn smarter_broadcast(&self, counter: Arc<Mutex<usize>>, message: usize) {
         // Alaredy added the message value to self.seen.
@@ -220,7 +299,8 @@ impl HandleMessage<Envelope<IncomingPayload>> for BroadCastNode {
                     // Do I Broadcast this or do I gossip?
                     // I'll stick to broadcasting at the moment
                     // but we'll see
-                    self.smarter_broadcast(counter, broadcast.message).await;
+                    self.smarter_broadcast_with_retries(counter, broadcast.message)
+                        .await;
                 }
                 // I will send the broadcastOK for this method
                 let meta = Metadata::new(Some(msg_id), broadcast.metadata.msg_id);
@@ -242,10 +322,6 @@ impl HandleMessage<Envelope<IncomingPayload>> for BroadCastNode {
                     let mut pending_acks = self.pending_acks.lock().await;
                     if let Some(acks_set) = pending_acks.get_mut(&key) {
                         acks_set.remove(&msg_src);
-
-                        if acks_set.is_empty() {
-                            pending_acks.remove(&key);
-                        }
                     }
                 }
 
