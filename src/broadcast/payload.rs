@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +31,8 @@ pub enum IncomingPayload {
     #[serde(rename = "read")]
     ReadPayload(ReadStruct),
     Broadcast(Broadcast),
+    Gossip(Gossip),
+    GossipOk(GossipOk),
     BroadcastOk(BroadcastOk),
 }
 
@@ -44,7 +46,35 @@ pub enum OutgoingPayload {
     #[serde(rename = "read_ok")]
     ReadPayloadOk(ReadOk),
     BroadcastOk(BroadcastOk),
+    Gossip(Gossip),
+    GossipOk(GossipOk),
     Broadcast(Broadcast),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GossipOk {
+    #[serde(flatten)]
+    pub metadata: Metadata,
+    pub message: HashSet<usize>,
+}
+
+impl GossipOk {
+    pub fn new(metadata: Metadata, message: HashSet<usize>) -> Self {
+        Self { metadata, message }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Gossip {
+    pub message: HashSet<usize>,
+    #[serde(flatten)]
+    pub metadata: Metadata,
+}
+
+impl Gossip {
+    pub fn new(message: HashSet<usize>, metadata: Metadata) -> Self {
+        Self { message, metadata }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
