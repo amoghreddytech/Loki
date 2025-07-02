@@ -16,21 +16,21 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct BroadCastNode {
-    msg_id: Arc<Mutex<usize>>,
-    pub neighbours: Vec<String>,
     pub node_id: String,
     pub node_ids: Vec<String>,
+    pub neighbours: Vec<String>,
     pub seen: HashSet<usize>,
     // values here are just things that can
     // be converted to json representation.
     pub transmitter: UnboundedSender<Value>,
+    msg_id: Arc<Mutex<usize>>,
     // I need a node_map_of_seen_values
     // say my node_id ix 1 -> this map will be
     // {"n2", [33,54], n3: [42,45], n4 : [65,76]}
-    pub gossip_map: Arc<Mutex<HashMap<String, HashSet<usize>>>>,
+    // pub gossip_map: Arc<Mutex<HashMap<String, HashSet<usize>>>>,
 
     // This hashmap needs to hold the msg_id or the broadcast value and the nodes that it needs to send it to
-    pub pending_acks: Arc<Mutex<HashMap<usize, HashSet<String>>>>,
+    pub pending_acks: Arc<Mutex<HashMap<String, HashSet<String>>>>,
 }
 
 impl BroadCastNode {
@@ -42,17 +42,10 @@ impl BroadCastNode {
             neighbours: Vec::new(),
             seen: HashSet::new(),
             transmitter,
-            gossip_map: Arc::new(Mutex::new(HashMap::new())),
+            // gossip_map: Arc::new(Mutex::new(HashMap::new())),
             // I need to know foe each broadcast which neighbours have not replied
             pending_acks: Arc::new(Mutex::new(HashMap::new())),
         }
-    }
-
-    async fn add_messages_to_gossip_map(&self, messages: HashSet<usize>, neighbour: String) {
-        let mut map = self.gossip_map.lock().await;
-        let known_sent_nodes: &mut HashSet<usize> =
-            map.entry(neighbour).or_insert_with(HashSet::new);
-        known_sent_nodes.extend(messages);
     }
 
     async fn get_msg_id(counter: &Arc<Mutex<usize>>) -> usize {
@@ -62,50 +55,97 @@ impl BroadCastNode {
         id
     }
 
-    async fn gossip(&self, msg_src: String) {
-        let neighbours = self.neighbours.clone();
-        for neighbour in neighbours {
-            // This is the case of sending it back to source and
-            // The case of if the neigbour is the maybe error here.
-            //
+    async fn smarter_broadcast(&self, counter: Arc<Mutex<usize>>, message: usize) {
+        // Alaredy added the message value to self.seen.
+        // I want to check acknolegements
+        // I need some uniue_key
+        // node_id that is send the thing and the message and a String
+        // These two can be unique I can insert and remove in a hasset
+        // or whatever.
 
+        // SO the first time I get a broadcast message on a node I need to
+        // Insert into the pending acknolegement array thing.
+        // I need to create a loop or a time based something
+        // where as long as there are things in the pending acknolodegment
+        // Then it keeps sending after a time period.
+        let key = format!("{}, {}", self.node_id, message);
+        // This gets the pending acknologments for the key
+        let pending_acks = {
+            let mut pending_acks = self.pending_acks.lock().await;
+            match pending_acks.get(&key) {
+                // If it's some great we take that
+                Some(set) => set.clone(),
+                // If it's none we a create a hashset with
+                None => {
+                    let neighbours = self.neighbours.clone();
+                    let set = HashSet::from_iter(neighbours.clone());
+                    pending_acks.insert(key.clone(), set.clone());
+                    set
+                }
+            }
+        };
+
+        // for the pending acks I am now going to send it to them
+
+        for neighbour in pending_acks {
             if neighbour == self.node_id {
-                panic!("how can my neighbour be myself so then we can figure it out")
+                // This can never be there
+                // let's panic
+                panic!("I can't be the neighbour of myself, check smarter broadcast");
             }
 
-            if neighbour == msg_src {
-                continue;
-            }
-
-            // These are the nodes that I know I've sent this node.
-            let known_sent_nodes: HashSet<usize> = {
-                let map = self.gossip_map.lock().await;
-                map.get(&neighbour).cloned().unwrap_or_default()
-            };
-
-            // my messages
-            let unsent_messages: HashSet<usize> =
-                self.seen.difference(&known_sent_nodes).cloned().collect();
-
-            if unsent_messages.is_empty() {
-                continue;
-            }
-
-            let counter = self.msg_id.clone();
-            // Send the message;
-            let new_msg_id: usize = Self::get_msg_id(&counter).await;
-            let metadata = Metadata::new(Some(new_msg_id), None);
-            // Create gossip messeges to the neighbours
-            let payload = OutgoingPayload::Gossip(Gossip::new(unsent_messages, metadata));
-            let envelope = Envelope::new(self.node_id.clone(), neighbour.clone(), payload);
-            let gossip_json = match serde_json::to_value(envelope) {
+            let new_message_id = Self::get_msg_id(&counter).await;
+            let meta = Metadata::new(Some(new_message_id), None);
+            let b_payload = OutgoingPayload::Broadcast(Broadcast::new(meta, message));
+            let b_envelope = Envelope::new(self.node_id.clone(), neighbour.clone(), b_payload);
+            let json_value = match serde_json::to_value(&b_envelope) {
                 Ok(val) => val,
-                Err(_) => panic!("Gossip json failed to serialize"), // Stop retries on serialization failure
+                Err(e) => {
+                    eprintln!(
+                        "could not convert {:?} to a serde json value with errro {e}",
+                        &b_envelope
+                    );
+                    panic!("")
+                }
             };
-            if let Err(e) = self.transmitter.send(gossip_json.clone()) {
+            if let Err(e) = self.transmitter.send(json_value) {
                 eprintln!(
-                    "Failed to send to {} from {} with errro {e}",
-                    self.node_id, neighbour
+                    "Could not send from broadcast to nighbours, printing is weird cause of borrow rules but do it now :---D \n {e} "
+                );
+            }
+        }
+        // I have transmitted my acks. I'm done broadcasting.
+    }
+
+    // I'll pass in arcs and stuff later
+    // If I'm moving it to different threds
+    // Now I'll just push this out into a
+    // seperate function so I don't remake this
+    // work again.
+    async fn dumb_broadcast(&self, counter: Arc<Mutex<usize>>, message: usize) {
+        for neighbour in &self.neighbours {
+            // If the neighbour is the node that send the message dont broadcast back to it
+            if neighbour == &self.node_id {
+                continue;
+            }
+
+            let new_message_id = Self::get_msg_id(&counter).await;
+            let meta = Metadata::new(Some(new_message_id), None);
+            let b_payload = OutgoingPayload::Broadcast(Broadcast::new(meta, message));
+            let b_envelope = Envelope::new(self.node_id.clone(), neighbour.clone(), b_payload);
+            let json_value = match serde_json::to_value(&b_envelope) {
+                Ok(val) => val,
+                Err(e) => {
+                    eprintln!(
+                        "could not convert {:?} to a serde json value with errro {e}",
+                        &b_envelope
+                    );
+                    panic!("")
+                }
+            };
+            if let Err(e) = self.transmitter.send(json_value) {
+                eprintln!(
+                    "Could not send from broadcast to nighbours, printing is weird cause of borrow rules but do it now :---D \n {e} "
                 );
             }
         }
@@ -170,75 +210,41 @@ impl HandleMessage<Envelope<IncomingPayload>> for BroadCastNode {
                 let new = self.seen.insert(broadcast.message);
                 // This is the bit I have to deal and do with
                 // actually broadcasting
-                // Let's solve for a single node case and no partitions
-                if new {}
+                // Let's solve for a multiple nodes case and no partitions
+                let counter = self.msg_id.clone();
+                if new {
+                    // I have a new value I have to send it to everyone.
+                    // The simlest way is to send continusly to all the neighbours and them
+                    // to all the neighbours and this will work as long as
+                    // The msg is new in the node
+                    // Do I Broadcast this or do I gossip?
+                    // I'll stick to broadcasting at the moment
+                    // but we'll see
+                    self.smarter_broadcast(counter, broadcast.message).await;
+                }
                 // I will send the broadcastOK for this method
                 let meta = Metadata::new(Some(msg_id), broadcast.metadata.msg_id);
-                let b_ok_payload = OutgoingPayload::BroadcastOk(BroadcastOk::new(meta));
+                let b_ok_payload =
+                    OutgoingPayload::BroadcastOk(BroadcastOk::new(meta, broadcast.message));
                 let b_ok_envelope = Envelope::new(msg_dest, msg_src, b_ok_payload);
                 Some(b_ok_envelope)
             }
             IncomingPayload::Gossip(gossip) => {
                 // What do you do when you get a gossip message
-                self.seen.extend(gossip.message.iter());
-
-                // The message_id is the parent mesg_id
-                // And you reply to the node that sent you the gossip
-                let metadata = Metadata::new(Some(msg_id), gossip.metadata.msg_id);
-                let payload = OutgoingPayload::GossipOk(GossipOk::new(metadata, gossip.message));
-                let response = Some(Envelope::new(msg_dest, msg_src, payload));
-                // I need to gossip to my nighbours
-                for neighbour in &self.neighbours {
-                    let known_by_me = {
-                        let mut map = self.gossip_map.lock().await;
-                        map.entry(neighbour.clone())
-                            .or_insert_with(HashSet::new)
-                            .clone()
-                    };
-
-                    let difference: HashSet<usize> = self
-                        .seen
-                        .difference(&known_by_me)
-                        .cloned()
-                        .collect::<HashSet<usize>>();
-
-                    let transmitter = self.transmitter.clone();
-                    let sending_node = self.node_id.clone();
-                    let destination_node = neighbour.clone();
-                    let counter: Arc<Mutex<usize>> = self.msg_id.clone();
-                    if !difference.is_empty() {
-                        tokio::spawn(async move {
-                            let new_msg_id = Self::get_msg_id(&counter).await;
-
-                            let metadata = Metadata::new(Some(new_msg_id), None);
-                            let payload =
-                                OutgoingPayload::Gossip(Gossip::new(difference, metadata));
-                            let envelope =
-                                Some(Envelope::new(sending_node, destination_node, payload));
-
-                            let gossip_response = match serde_json::to_value(envelope) {
-                                Ok(val) => val,
-                                Err(_) => panic!("Gossip json failed to serialize"), // Stop retries on serialization failure
-                            };
-
-                            if let Err(_) = transmitter.send(gossip_response) {}
-                        });
-                    }
-                }
-
-                response
+                None
             }
 
             // Crap I need to do when I get a gossip is Ok message
             IncomingPayload::GossipOk(gossip_ok) => None,
             IncomingPayload::BroadcastOk(ok) => {
-                if let Some(in_reply_to) = ok.metadata.in_reply_to {
-                    let mut pending_awks = self.pending_acks.lock().await;
-                    // get me the hashset representing the in_reply_to_values
-                    if let Some(awks_on_node) = pending_awks.get_mut(&in_reply_to) {
-                        awks_on_node.remove(&msg_src);
-                        if awks_on_node.is_empty() {
-                            pending_awks.remove(&in_reply_to);
+                let key = format!("{}, {}", self.node_id.clone(), ok.messge);
+                {
+                    let mut pending_acks = self.pending_acks.lock().await;
+                    if let Some(acks_set) = pending_acks.get_mut(&key) {
+                        acks_set.remove(&msg_src);
+
+                        if acks_set.is_empty() {
+                            pending_acks.remove(&key);
                         }
                     }
                 }

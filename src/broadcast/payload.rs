@@ -168,10 +168,12 @@ impl Broadcast {
 pub struct BroadcastOk {
     #[serde(flatten)]
     pub metadata: Metadata,
+    #[serde(skip_serializing)]
+    pub messge: usize,
 }
 
 impl BroadcastOk {
-    pub fn new(metadata: Metadata) -> Self {
-        Self { metadata }
+    pub fn new(metadata: Metadata, messge: usize) -> Self {
+        Self { metadata, messge }
     }
 }
