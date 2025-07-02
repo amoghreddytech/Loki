@@ -1,3 +1,9 @@
+// How do I do this gossip shit,
+// Basically I just need a timer
+// And I need to periodically keep sending our gossip messages
+// and this will help reconsile everything else
+// Let's come up with a way to continuously fire gossip messages.
+
 use anyhow::Result;
 use async_trait::async_trait;
 use tokio::time::{Duration, sleep};
@@ -25,13 +31,12 @@ pub struct BroadCastNode {
     // be converted to json representation.
     pub transmitter: UnboundedSender<Value>,
     msg_id: Arc<Mutex<usize>>,
-    // I need a node_map_of_seen_values
-    // say my node_id ix 1 -> this map will be
-    // {"n2", [33,54], n3: [42,45], n4 : [65,76]}
+    // I'm looking at it from my nodes perspective
+    // So I'm lookin at what my node thinks the other nodes have seen haven't seen.
     pub gossip_map: Arc<Mutex<HashMap<String, HashSet<usize>>>>,
-
     // This hashmap needs to hold the msg_id or the broadcast value and the nodes that it needs to send it to
     pub pending_acks: Arc<Mutex<HashMap<String, HashSet<String>>>>,
+    //
 }
 
 impl BroadCastNode {
@@ -54,6 +59,48 @@ impl BroadCastNode {
         let id = *guard;
         *guard = guard.saturating_add(1);
         id
+    }
+
+    pub async fn gossip(&self) {
+        // This gets the map of what my node thinks that it has seen.
+        let gossip_map = self.gossip_map.lock().await;
+        let seen_copy = self.seen.clone();
+
+        for neighbour in &self.node_ids {
+            let neighbour_map = gossip_map.get(neighbour);
+            let neighbour_map = match neighbour_map {
+                Some(map) => map.clone(),
+                None => HashSet::new(),
+            };
+
+            let from = self.node_id.clone();
+            let to = neighbour.clone();
+
+            let messges_to_send: HashSet<usize> =
+                seen_copy.difference(&neighbour_map).cloned().collect();
+            let new_message_id = Self::get_msg_id(&self.msg_id).await;
+            let meta = Metadata::new(Some(new_message_id), None);
+            let g_payload = OutgoingPayload::Gossip(Gossip::new(messges_to_send, meta));
+
+            let g_envelope = Envelope::new(from, to, g_payload);
+
+            let json_value = match serde_json::to_value(&g_envelope) {
+                Ok(val) => val,
+                Err(e) => {
+                    eprintln!(
+                        "could not convert {:?} to a serde json value with errro {e}",
+                        &g_envelope
+                    );
+                    panic!("")
+                }
+            };
+
+            if let Err(e) = self.transmitter.send(json_value) {
+                eprintln!(
+                    "Could not send from broadcast to nighbours, printing is weird cause of borrow rules but do it now :---D \n {e} "
+                );
+            }
+        }
     }
 
     async fn smarter_broadcast_with_retries(&self, counter: Arc<Mutex<usize>>, message: usize) {
@@ -133,7 +180,7 @@ impl BroadCastNode {
     // Now I'll just push this out into a
     // seperate function so I don't remake this
     // work again.
-
+    #[allow(unused)]
     async fn smarter_broadcast(&self, counter: Arc<Mutex<usize>>, message: usize) {
         // Alaredy added the message value to self.seen.
         // I want to check acknolegements
@@ -201,6 +248,7 @@ impl BroadCastNode {
     // Now I'll just push this out into a
     // seperate function so I don't remake this
     // work again.
+    #[allow(unused)]
     async fn dumb_broadcast(&self, counter: Arc<Mutex<usize>>, message: usize) {
         for neighbour in &self.neighbours {
             // If the neighbour is the node that send the message dont broadcast back to it
@@ -292,13 +340,6 @@ impl HandleMessage<Envelope<IncomingPayload>> for BroadCastNode {
                 // Let's solve for a multiple nodes case and no partitions
                 let counter = self.msg_id.clone();
                 if new {
-                    // I have a new value I have to send it to everyone.
-                    // The simlest way is to send continusly to all the neighbours and them
-                    // to all the neighbours and this will work as long as
-                    // The msg is new in the node
-                    // Do I Broadcast this or do I gossip?
-                    // I'll stick to broadcasting at the moment
-                    // but we'll see
                     self.smarter_broadcast_with_retries(counter, broadcast.message)
                         .await;
                 }
@@ -310,12 +351,34 @@ impl HandleMessage<Envelope<IncomingPayload>> for BroadCastNode {
                 Some(b_ok_envelope)
             }
             IncomingPayload::Gossip(gossip) => {
-                // What do you do when you get a gossip message
-                None
+                let recieved_messges = gossip.message;
+                // If I reach this point then I can update my map
+                self.seen.extend(recieved_messges.clone());
+                {
+                    let mut map = self.gossip_map.lock().await;
+                    map.entry(msg_src.clone())
+                        .or_insert_with(HashSet::new)
+                        .extend(recieved_messges.clone());
+                }
+
+                {
+                    let mut pending_acks = self.pending_acks.lock().await;
+                    for message in recieved_messges {
+                        let key = format!("{}, {}", self.node_id, message);
+                        if let Some(neighbours_set) = pending_acks.get_mut(&key) {
+                            neighbours_set.remove(&msg_src);
+                        }
+                    }
+                }
+
+                let meta = Metadata::new(Some(msg_id), gossip.metadata.msg_id);
+                let g_ok_payload = OutgoingPayload::GossipOk(GossipOk::new(meta));
+                let g_ok_envelope = Envelope::new(msg_dest, msg_src, g_ok_payload);
+                Some(g_ok_envelope)
             }
 
             // Crap I need to do when I get a gossip is Ok message
-            IncomingPayload::GossipOk(gossip_ok) => None,
+            IncomingPayload::GossipOk(_) => None,
             IncomingPayload::BroadcastOk(ok) => {
                 let key = format!("{}, {}", self.node_id.clone(), ok.messge);
                 {

@@ -3,9 +3,11 @@ use loki::broadcast::node::BroadCastNode;
 use loki::broadcast::payload::IncomingPayload;
 use loki::message::{Envelope, HandleMessage};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, stdin, stdout};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::unbounded_channel;
+use tokio::time::sleep;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -15,6 +17,17 @@ async fn main() -> Result<()> {
     let (tx, mut rx) = unbounded_channel();
     let sender = tx.clone();
     let node = Arc::new(Mutex::new(BroadCastNode::new(sender)));
+
+    {
+        let node_clone = node.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_millis(1000)).await;
+                let locked = node_clone.lock().await;
+                locked.gossip().await;
+            }
+        });
+    }
 
     let mut stdout = stdout();
     tokio::spawn(async move {

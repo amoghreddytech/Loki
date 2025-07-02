@@ -55,12 +55,11 @@ pub enum OutgoingPayload {
 pub struct GossipOk {
     #[serde(flatten)]
     pub metadata: Metadata,
-    pub message: HashSet<usize>,
 }
 
 impl GossipOk {
-    pub fn new(metadata: Metadata, message: HashSet<usize>) -> Self {
-        Self { metadata, message }
+    pub fn new(metadata: Metadata) -> Self {
+        Self { metadata }
     }
 }
 
